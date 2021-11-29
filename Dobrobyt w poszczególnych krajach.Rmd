@@ -1,0 +1,435 @@
+---
+title: "Raport - Wpływ różnych czynnikóW na dobrobyt"
+author: "Marcin Jaskulski"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: yeti
+    fig_caption: yes
+    number_sections: yes
+    keep_md: yes
+    word_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+
+# Executive summary
+Celem analizy jest znalezienie i powiązania pomiędzy dobrobytem w krajach, a ceną złota, bitcoina, S&P Composite oraz kursami wymiany walut.
+
+Na rok 2018 według  [Międzynarodowego Funduszu Walutowego ](https://pl.wikipedia.org/wiki/Lista_pa%C5%84stw_%C5%9Bwiata_wed%C5%82ug_PKB_nominalnego) największą gospodarką świata są Stany Zjednoczone. Na rozwuj tak dużej gospodraki ma wspływ wiele czynników. Drugą gospodarką są Chiny. W raporcie zostaną przeanalizowane wskaźniki dobrobytu Stanów Zjednoczonych i wpływ Chińskiego Yuan-a.
+
+# Użyte biblioteki
+```{r libs, echo=FALSE}
+library(EDAWR)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+library(zoo)
+library(tibble)
+library(plotly)
+library(caret)
+```
+
+
+# Kod pozwalający wczytać dane z pliku.
+```{r read data}
+World_Development_Indicators <- read_excel("Data pack/World_Development_Indicators.xlsx")
+
+SP_Composite <- read.table("Data pack/S&P Composite.csv", sep = ",",  header = TRUE)
+
+Gold_prices <- read.csv("Data pack/Gold prices.csv")
+
+Bitcoin_diff <- read.csv("Data pack/Bitcoin/BCHAIN-DIFF.csv") # diff to jest trudność wydobycia
+Bitcoin_hrate <- read.csv("Data pack/Bitcoin/BCHAIN-HRATE.csv") # liczba tera hashy wykonanych 
+Bitcoin_mkpru <- read.csv("Data pack/Bitcoin/BCHAIN-MKPRU.csv") # średnia wartość rynkowa 
+Bitcoin_trvou <- read.csv("Data pack/Bitcoin/BCHAIN-TRVOU.csv") # całkowita wartość bitcoinów
+
+Currency_Exchange_Rates <- read.csv("Data pack/CurrencyExchangeRates.csv")
+```
+
+# Czysczenie i transformacja danych
+
+## Kursy walut
+Zbiór zawiera dane o kursach walut.
+Dane pochodzą z lat 1995, 2018, co ogranicza nam pozostałe zbiory do podanego okresu. Brakujące dane zostaną zinterpolowane. Walutą która zostanei poddane analizie będzie Chiński Yuan, jako waluta drugiej gospodarki świata. Waluta ta jest o tyle ciekawe, że jest odgórnie sterowana przez rząd Chińskiej Republiki Ludowej. 
+
+```{r}
+Currency_Exchange_Rates_DF <- data.frame(Currency_Exchange_Rates) %>%
+  select(Date, Chinese.Yuan) %>%
+   group_by(substr(Date, 0,4)) %>% 
+   summarize( Chinese.Yuan = mean(Chinese.Yuan, na.rm=TRUE))
+
+colnames(Currency_Exchange_Rates_DF) <- c("Year", "Yuan")
+
+Currency_Exchange_Rates_DF$Yuan <- na.approx(Currency_Exchange_Rates_DF$Yuan)
+
+ggplot(Currency_Exchange_Rates_DF, aes(x=Year, y=Yuan, group=1)) + 
+  geom_line(aes(group=1)) +
+  geom_point() +
+  labs(x = "Rok", y = "Wartość Yuan do USD") +
+  scale_x_discrete(breaks=seq(1995, 2020, 5)) +
+  theme_minimal()
+```
+
+## Współczynniki rozwoju
+Zbiór objemuje 201 krajów i 7 kategorii zamożności, do których klasyfikują się poszczegulne kraje. Zbiór jest opisany w trzech wymiarach: Rok, Kraj, współczynniki dobrobytu. 
+
+Zbiór został poddany tranpozycji, oraz sprowadzony do dwóch wymiarów, poprzez wybranie StanóW Zjednoczonych jako interesującego nas kraju.
+
+Kategorie, które są w części puste nie zostaną poddane analizie ze względu na brak danych. Po odfiltrowaniu atrybutów zawierajacych wartości puste otrzymujemy 125 kolumn. 
+
+```{r}
+USA_Indicators_DF <- data.frame(World_Development_Indicators) %>%
+  filter(Country.Name %in% c("United States")) %>%
+  subset(select = -c(Country.Name, Country.Code, Series.Code))
+
+USA_Indicators_DF[USA_Indicators_DF == ".."] <- NA
+
+USA_Indicators_DF = setNames(data.frame(t(USA_Indicators_DF[,-1])), USA_Indicators_DF[,1])
+USA_Indicators_DF <- cbind(rownames(USA_Indicators_DF), USA_Indicators_DF)
+rownames(USA_Indicators_DF) <- NULL
+colnames(USA_Indicators_DF)[1] <- "Year"
+
+USA_Indicators_DF <- USA_Indicators_DF  %>%
+  mutate(Year = substr(Year, 2, 5)) %>%
+  filter(Year >= 1995) %>%
+  filter(Year <= 2018)
+
+USA_Indicators_DF <- data.frame(lapply(USA_Indicators_DF,as.numeric))
+
+na_sum <- data.frame(colSums(is.na(USA_Indicators_DF)))
+
+interesting_USA_Indicators_DF <- USA_Indicators_DF[,na_sum == 0]
+
+amount_chart <- na_sum %>% 
+   mutate(Na.Amount = colSums.is.na.USA_Indicators_DF..) %>%
+   group_by(Na.Amount) %>% 
+   count(Na.Amount)
+
+
+ggplot(amount_chart, aes(x=Na.Amount, y=n)) + 
+  geom_bar(stat="identity") +
+  labs(x="Liczba warości pustych", y="Liczba atrybutów") +
+  scale_x_continuous(breaks=seq(0, 26, 2)) +
+  scale_y_continuous(breaks=seq(0, 150, 25)) +
+  theme_minimal()
+
+```
+
+### Wstępna Korelacja
+Z wykresu można zaobserować, że występuje dużo ciemnych, czerwonych i niebieskich plam sygnalizujących dużą korelację. Gdy weźmiemy mniejszą próbkę możemy zaobserwoać, że zbior posiada atrybuty, które sa od siebie w sposób oczywisty zależne, jak przykładowo liczba mieszkańców ogóleni i liczba kobiet/mężczyzn w Stanach Zjednoczonych. 
+
+
+```{r, message=FALSE, echo=FALSE, out.width = "100%", fig.align="center", fig.width=10, fig.height=8}
+biggest_cor_mat <- cor(
+  x = interesting_USA_Indicators_DF %>% 
+  select(-c(1)), use="pairwise.complete.obs")
+
+biggest_cor_df = data.frame(biggest_cor_mat) %>%
+ rownames_to_column() %>%
+ pivot_longer(-rowname, names_to="colname")
+
+biggest_cor_plot <- ggplot(biggest_cor_df, aes(colname, rowname, fill=value)) + 
+  geom_tile() +
+  scale_fill_gradient2() + 
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+
+ggplotly(biggest_cor_plot)
+
+
+small_cor_mat <- cor(
+  x = interesting_USA_Indicators_DF[,53:68] %>% 
+  select(-c(1)), use="pairwise.complete.obs")
+
+smaill_cor_df = data.frame(small_cor_mat) %>%
+ rownames_to_column() %>%
+ pivot_longer(-rowname, names_to="colname")
+
+ggplot(smaill_cor_df, aes(colname, rowname, fill=value)) + 
+  geom_tile() +
+  scale_fill_gradient2() + 
+  theme(axis.text.x=element_text(angle = 90, hjust = 0))
+```
+
+
+### Ograniczenie atrybutów 
+Aby poradzić sobie z problemem z zaleznymi atrybutami wykorzystane zostaną te najbardziej ogólne: 
+
+* Urban.population - stopień zamieszkania w mieście.
+* Population..total - Ogólna populacja.
+* Inflation..consumer.prices..annual... - inflacja.
+* GDP.per.capita..current.US.. -  GDP per capita.
+* CO2.emissions..metric.tons.per.capita. - emisja CO2 na mieszkańca.
+
+```{r, echo=FALSE}
+general_USA_Indicators_DF <- interesting_USA_Indicators_DF %>% 
+  select(
+    c(Year, 
+      Urban.population, 
+      Population..total, 
+      Inflation..consumer.prices..annual..., 
+      GDP.per.capita..current.US..,
+      CO2.emissions..metric.tons.per.capita.
+      ))
+
+chart_general_USA_Indicator_DF <- general_USA_Indicators_DF %>% pivot_longer(2:6) %>% filter(!is.na(value))
+
+ggplot( chart_general_USA_Indicator_DF , aes(x=Year, y=value)) + 
+  geom_line(aes(group=1)) +
+  geom_point() +
+  facet_wrap(name ~ ., scales="free", ncol = 2) +
+  theme_minimal()
+
+```
+
+
+
+
+## Indeks rynkowy S&P Composite
+Zbiór opisuje właściwości indeksu S&P Composite. Zbiór został pogrupowany względem roku, a z wartości wyciągnięto średnią. Wartości puste zostały pominięte. 
+
+Na wykresie zostały zaprezentowane dostępne atrybuty zbioru. Można na jego podstwie wywnioskować, że S.P.Composite, Ral.Price, Dividend, i Real.Dividend mają podobny kształt. Tak samo Earnings i Real.Earnings.
+
+W dalszej analizie pominiemy atrybuty Real.Price, Dividend, Real.Dividen oraz Real.Earnings.
+
+Intrpretacja wskaźników:
+
+* CPI - wskaźnik cen towarów i usług konsumpcyjnych.
+* Cyclically.Adjusted.PE.Ratio - cyklicznie dostosowywany wskaźnik ceny do zysków.
+* Dividend - dywidenda.
+* Earnings - zarobki na indeksie.
+* Long.Interest.Rate – stopy procentowe, które obliczane są na podstawie długoterminowych obligacji rządowych lub porównywalnych papierów wartościowych.W przypadku braku danych z danego miesiąca nie bierzemy go pod uwagę.
+* Real.Price - realna cena.
+* S.P.Composite - wartość indeksu.
+
+```{r}
+SP_Composite_DF <- data.frame(SP_Composite) %>%
+    mutate(Year = as.numeric(substr(Year, 0, 4))) %>%
+    filter(Year >= 1995) %>%
+    filter(Year <= 2018) %>%
+    group_by(Year) %>% 
+    summarize(S.P.Composite = mean(S.P.Composite, na.rm=TRUE),
+              Dividend = mean(Dividend),
+              Earnings = mean(Earnings, na.rm=TRUE),
+              CPI = mean(CPI, na.rm=TRUE), 
+              Long.Interest.Rate = mean(Long.Interest.Rate, na.rm=TRUE),
+              Real.Price = mean(Real.Price),
+              Real.Dividend = mean(Real.Dividend),
+              Real.Earnings = mean(Real.Earnings),
+              Cyclically.Adjusted.PE.Ratio = mean(Cyclically.Adjusted.PE.Ratio, na.rm=TRUE)
+    )
+
+chart_SP_Composite <- SP_Composite_DF %>% pivot_longer(2:10) %>% filter(!is.na(value))
+
+ggplot( chart_SP_Composite , aes(x=Year, y=value)) + 
+  geom_line(aes(group=1)) +
+  geom_point() +
+  facet_wrap(name ~ ., scales="free", ncol = 3) +
+  scale_x_discrete(breaks=seq(1995, 2020, 5)) +
+  theme_minimal()
+
+SP_Composite_DF <- SP_Composite_DF %>%
+  select(Year, 
+         SP.Composite.CPI = CPI,
+         SP.Composite.Cyclically.Adjusted.PE.Ratio = Cyclically.Adjusted.PE.Ratio,
+         SP.Composite.Earnings = Earnings,
+         SP.Composite.Long.Interest.Rate = Long.Interest.Rate,
+         S.P.Composite = S.P.Composite
+         )
+```
+
+## Cena złota
+Ponieważ cena złota jest ma tą samą wartość, wyrazoną w różncyh walutach, to na potrzeby analizy przyjęta zosatnie cena złota wyrażana w dolarach. Dodatkowo przyjemiemy średnią z notowania porannego i wieczornego.
+
+```{r}
+Gold_prices_DF <- data.frame(Gold_prices) %>% 
+    mutate(Year = substr(Date, 0, 4)) %>%
+    filter(Year >= 1995) %>%
+    filter(Year <= 2018) %>%
+    group_by(Year) %>% 
+    summarize( USD = (mean(USD..AM., na.rm=TRUE)  + mean(USD..PM., na.rm=TRUE))/2)
+colnames(Gold_prices_DF) <- c("Year", "Gold_Price_USD")
+
+ggplot(Gold_prices_DF, aes(x=Year, y=Gold_Price_USD, group=1)) + 
+  geom_line(aes(group=1)) +
+  geom_point() +
+  labs(x = "Rok", y = "Cena złota [USD]") +
+  scale_x_discrete(breaks=seq(1995, 2020, 5)) +
+  theme_minimal()
+```
+
+
+
+## Bitcoin
+Do analizy wykorzystamy średnią cenę bitcoina w ciagu roku. Lata przed 2009 otrzymają wartość 0.
+
+```{r}
+mock_Bitcoin_mkpru_DF <- data.frame(c(1995:2009), 0)
+clean_bitcoin <- function(data, name) {
+  clean <- data.frame(data) %>%
+    mutate(Year = substr(Date, 0, 4)) %>%
+    filter(Year >= 1995) %>%
+    filter(Year <= 2018) %>%
+    group_by(Year) %>%
+    summarize(Value = (mean(Value)))
+  colnames(clean) <- c("Year", name)
+  names(mock_Bitcoin_mkpru_DF) <- names(clean)
+  clean <- rbind(clean, mock_Bitcoin_mkpru_DF)
+}
+
+
+# zbiorcze 
+Bitcoin_mkpru_DF <- clean_bitcoin(Bitcoin_mkpru, "Bitcoin_Price")
+Bitcoin_diff_DF  <- clean_bitcoin(Bitcoin_diff, "Bitcoin_Difficult")
+Bitcoin_hrate_DF <- clean_bitcoin(Bitcoin_hrate, "Bitcoin_Hash")
+Bitcoin_trvou_DF <- clean_bitcoin(Bitcoin_trvou, "Bitcoin_Total_Value")
+
+bitcoin1 <- merge(Bitcoin_mkpru_DF, Bitcoin_diff_DF)
+bitcoin2 <- merge(Bitcoin_hrate_DF, Bitcoin_trvou_DF)
+bitcoin  <- merge(bitcoin1, bitcoin2)
+
+
+chart_bitcoin <- bitcoin %>% pivot_longer(2:5) %>% filter(!is.na(value))
+
+ggplot( chart_bitcoin , aes(x=Year, y=value)) + 
+  geom_line(aes(group=1)) +
+  geom_point() +
+  facet_wrap(name ~ ., scales="free", ncol = 2) +
+  scale_x_discrete(breaks=seq(1995, 2020, 5)) +
+  theme_minimal()
+
+```
+
+Z zaprezentowanych powyżej wykresów można zaobserwować, że wszytskie 4 wartości są od siebie zależne. Na potrzeby dalszych analiz skorzystamy z atrybutu ceny bitcoina.
+
+## Połączenie danych
+```{r}
+df1 <- merge(Currency_Exchange_Rates_DF, general_USA_Indicators_DF)
+df2 <- merge(Gold_prices_DF, Bitcoin_mkpru_DF)
+df3 <- merge(df2, SP_Composite_DF)
+df <- merge(df1, df3)
+```
+
+
+# Korelacja 
+Poniższy wykres przedstawia wartość współczynnika korelacji Pearsona między parametrami atrybutów w zbiorze.
+
+```{r, message=FALSE, echo=FALSE, out.width = "100%", fig.align="center", fig.width=10, fig.height=8}
+cor_mat <- cor(
+  x = df %>% 
+  select(-c(1)), use="pairwise.complete.obs")
+
+cor_df = data.frame(cor_mat) %>%
+ rownames_to_column() %>%
+ pivot_longer(-rowname, names_to="colname")
+
+ggplot(cor_df, aes(colname, rowname, fill=value)) + 
+  geom_tile() +
+  scale_fill_gradient2() + 
+  theme(axis.text.x=element_text(angle = 90, hjust = 0))
+  
+```
+
+Poniższa tabela prezentuje 20 par atrybutów z największym współczynnikiem korelacji Pearsona.
+
+```{r, echo=FALSE}
+knitr::kable(
+  cor_df %>% 
+    filter(colname > rowname) %>% 
+    arrange(desc(abs(value))) %>% 
+    head(20)
+)
+```
+
+
+Najbardziej wyróżniającym korelacjami są:
+
+* Yuan - Cena złota - Chiny są dużym eksporterem. Słaby Yaun oznacza dla pozostałych krajów niższe ceny.
+* Procent mieszkańców miast - Emisja CO2 - Osoby żyjące w miastach korzystają z większej iości dóbr, których istanienie wiąże się z produkcją CO2.
+* Procent mieskzańców miast - Populacja - Coraz więcej osób chce mieszkać w mieście. 
+* Procent mieskzańców miast - GDP per capital - Bogatsze osoby mieszkają bliżej ośreodków miejskich.
+* Populacja - Emisja CO2 - Każda człowiek powoduje wytwarzani CO2. Stany zjednoczone przeniosły produkcję do innych krajów, a same starają się ograniczać emisję CO2. 
+* Populacja - GDP per capital - Jest coraz więcej osób, które generują większy produkt krajowy brutto.   
+* Cena złota - Emisja CO2 - Duża emisja CO2 w Ameryce negatywnie wpływa na cenę złota. Możliwą intrpretacją jest wydawanie większych ilości pieniędzy na zdrowie, a nie dobra materialne. 
+* Można zauważyć, że Bitcoin nie ma dużej korelacji z żadny, z atrybutów. Może być to spowodowane tym, że jest to waluta wirtualana, która nie jest odzwierciedleniem rynku. 
+
+
+
+
+# Podsumowanie rozmiaru zbioru i podstawowe statystyki.
+Ostateczny zbiór poddany analizie zawiera 15 atrybutów i 24 obserwacje. 
+
+```{r}
+options(knitr.kable.NA = '')
+knitr::kable(summary(df[1:6]))
+knitr::kable(summary(df[7:12]))
+```
+
+
+
+# Klasyfikator
+
+Niniejsza sekcja opisuje proces tworzenia regresora, którego zadaniem jest przewidywanie ceny złota. 
+Ze zbioru zostanie usunięty rok ze względu na XYZ.
+
+```{r}
+reggresion_df <- df[-1]
+
+inTraining  <- createDataPartition( y = reggresion_df$Gold_Price_USD, p=0.7, list=F)
+training <- reggresion_df[ inTraining,]
+testing  <- reggresion_df[-inTraining,]
+
+d1 <- data.frame(price=reggresion_df[inTraining,]$Gold_Price_USD)
+d2 <- data.frame(price=reggresion_df[-inTraining,]$Gold_Price_USD)
+
+ggplot(mapping=aes(alpha=0.4)) + 
+ geom_density(aes(price, fill="training"), d1) + 
+ geom_density(aes(price, fill="testing"), d2) + 
+ theme_minimal()
+```
+
+
+```{r}
+set.seed(23)
+ctrl <- trainControl(
+    # powtórzona ocena krzyżowa
+    method = "repeatedcv",
+    # liczba podziałów
+    number = 5,
+    # liczba powtórzeń
+    repeats = 5)
+
+fit <- train(Gold_Price_USD ~ .,
+             data = training,
+             method = "rf",
+             trControl = ctrl,
+             # Paramter dla algorytmu uczącego
+             ntree = 30)
+fit
+```
+
+```{r}
+rfClasses <- predict(fit, newdata = testing)
+
+confusionMatrix(data = rfClasses, testing$Gold_Price_USD)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
