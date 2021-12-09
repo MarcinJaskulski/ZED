@@ -1,12 +1,11 @@
 ---
-title: "Raport - Wpływ różnych czynnikóW na dobrobyt"
+title: "Raport - Analiza czynników wpływających na dobrobyt"
 author: "Marcin Jaskulski"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
-output: 
+output:
   html_document:
     toc: yes
     toc_float: yes
-    theme: yeti
     fig_caption: yes
     number_sections: yes
     keep_md: yes
@@ -20,12 +19,19 @@ knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 
 
 # Executive summary
-Celem analizy jest znalezienie i powiązania pomiędzy dobrobytem w krajach, a ceną złota, bitcoina, S&P Composite oraz kursami wymiany walut.
+Celem analizy jest znalezienie i interpretacja czynników wpływających na dobrobyt w państwie. 
 
-Na rok 2018 według  [Międzynarodowego Funduszu Walutowego ](https://pl.wikipedia.org/wiki/Lista_pa%C5%84stw_%C5%9Bwiata_wed%C5%82ug_PKB_nominalnego) największą gospodarką świata są Stany Zjednoczone. Na rozwuj tak dużej gospodraki ma wspływ wiele czynników. Drugą gospodarką są Chiny. W raporcie zostaną przeanalizowane wskaźniki dobrobytu Stanów Zjednoczonych i wpływ Chińskiego Yuan-a.
+Na rok 2018 według  [Międzynarodowego Funduszu Walutowego ](https://pl.wikipedia.org/wiki/Lista_pa%C5%84stw_%C5%9Bwiata_wed%C5%82ug_PKB_nominalnego) największą gospodarką świata są Stany Zjednoczone. Drugą gospodarką są Chiny. Na rozwój tak dużych gospodarek mają wpływ różne czynniki. Z tego względu zostały przeanalizowane wskaźniki dobrobytu Stanów Zjednoczonych i wpływ Chińskiego Yuan na ich zmiany. Dodatkowo analiza obejmuje cenę złota, bitcoina, oraz dane o indeksie S&P Composite. Dane zostały zebrane głównie przez Bank Światowy.
+
+Dane zostały pogrupowane względem roku. Ze względu na ograniczony przedział danych o kursie Yuan analiza obejmuje lata 1995 - 2018. Początkowy zbiór zawierał zbyt dużą liczbę atrybutów powodujących znaczny szum. Aby temu zaradzić atrybuty zostały odrzucone ze względu na brak ciągłości danych, bądź podobieństwo (np. wzrost populacji jest podobny do wzrostu ludności miejskiej).
+
+Taki zbiór został poddany analizie korelacji. Obserwacja, na którą warto zwrócić uwagą to zależność między spadkiem emisji CO2 i ceny Yuan, a wzrostem ceny złota. Ciekawą obeserwacją jest brak wpływu wzrostu ceny Bitcoina na cenę złota. Sugeruje to, że waluta wirtualna nie jest odwzorowaniem faktycznego stanu rynku finansowego. 
+
+Ostatnim elementem analizy jest sekcja próbująca przewidzieć cenę złota z wykorzystaniem algorytmu uczenia maszynowego Random Forest. W tej sekcji można zaobserwować, że największy wpływ na to mają czynniki takie jak: stopa procentowa indeksu S&P Composite, kurs Chińskiego Yuan, rok (upływający czas), czy populacja.
+
 
 # Użyte biblioteki
-```{r libs, echo=FALSE}
+```{r libs}
 library(EDAWR)
 library(dplyr)
 library(tidyr)
@@ -35,6 +41,8 @@ library(zoo)
 library(tibble)
 library(plotly)
 library(caret)
+library(gganimate)
+library(randomForest)
 ```
 
 
@@ -46,7 +54,7 @@ SP_Composite <- read.table("Data pack/S&P Composite.csv", sep = ",",  header = T
 
 Gold_prices <- read.csv("Data pack/Gold prices.csv")
 
-Bitcoin_diff <- read.csv("Data pack/Bitcoin/BCHAIN-DIFF.csv") # diff to jest trudność wydobycia
+Bitcoin_diff <-  read.csv("Data pack/Bitcoin/BCHAIN-DIFF.csv") # diff to jest trudność wydobycia
 Bitcoin_hrate <- read.csv("Data pack/Bitcoin/BCHAIN-HRATE.csv") # liczba tera hashy wykonanych 
 Bitcoin_mkpru <- read.csv("Data pack/Bitcoin/BCHAIN-MKPRU.csv") # średnia wartość rynkowa 
 Bitcoin_trvou <- read.csv("Data pack/Bitcoin/BCHAIN-TRVOU.csv") # całkowita wartość bitcoinów
@@ -54,11 +62,13 @@ Bitcoin_trvou <- read.csv("Data pack/Bitcoin/BCHAIN-TRVOU.csv") # całkowita war
 Currency_Exchange_Rates <- read.csv("Data pack/CurrencyExchangeRates.csv")
 ```
 
-# Czysczenie i transformacja danych
+# Czyszczenie i transformacja danych
+Niniejsza sekcja poświęcona jest czyszczeniu i transformacji danych z dostępnych zbiorów. 
+
 
 ## Kursy walut
 Zbiór zawiera dane o kursach walut.
-Dane pochodzą z lat 1995, 2018, co ogranicza nam pozostałe zbiory do podanego okresu. Brakujące dane zostaną zinterpolowane. Walutą która zostanei poddane analizie będzie Chiński Yuan, jako waluta drugiej gospodarki świata. Waluta ta jest o tyle ciekawe, że jest odgórnie sterowana przez rząd Chińskiej Republiki Ludowej. 
+Dane pochodzą z lat 1995, 2018, co ogranicza nam pozostałe zbiory do podanego okresu. Brakujące dane zostaną interpolowane. Waluta która zostanie poddana analizie będzie Chiński Yuan. Jest to waluta drugiej gospodarki świata. Waluta ta jest o tyle interesująca, że rząd Chińskiej Republiki Ludowej odgórnie steruje jej kursem. 
 
 ```{r}
 Currency_Exchange_Rates_DF <- data.frame(Currency_Exchange_Rates) %>%
@@ -79,11 +89,11 @@ ggplot(Currency_Exchange_Rates_DF, aes(x=Year, y=Yuan, group=1)) +
 ```
 
 ## Współczynniki rozwoju
-Zbiór objemuje 201 krajów i 7 kategorii zamożności, do których klasyfikują się poszczegulne kraje. Zbiór jest opisany w trzech wymiarach: Rok, Kraj, współczynniki dobrobytu. 
+Zbiór obejmuje 201 krajów i 7 kategorii zamożności, do których klasyfikują się poszczególne kraje. Zbiór jest opisany w trzech wymiarach: rok, kraj, współczynniki dobrobytu. 
 
-Zbiór został poddany tranpozycji, oraz sprowadzony do dwóch wymiarów, poprzez wybranie StanóW Zjednoczonych jako interesującego nas kraju.
+Zbiór został poddany transpozycji, oraz sprowadzony do dwóch wymiarów, poprzez wybranie Stanów Zjednoczonych jako największej gospodarki świata.
 
-Kategorie, które są w części puste nie zostaną poddane analizie ze względu na brak danych. Po odfiltrowaniu atrybutów zawierajacych wartości puste otrzymujemy 125 kolumn. 
+Kategorie, które są w części puste nie zostaną poddane analizie ze względu na brak danych. Po odfiltrowaniu atrybutów zawierających wartości puste otrzymujemy 125 kolumn. 
 
 ```{r}
 USA_Indicators_DF <- data.frame(World_Development_Indicators) %>%
@@ -124,7 +134,7 @@ ggplot(amount_chart, aes(x=Na.Amount, y=n)) +
 ```
 
 ### Wstępna Korelacja
-Z wykresu można zaobserować, że występuje dużo ciemnych, czerwonych i niebieskich plam sygnalizujących dużą korelację. Gdy weźmiemy mniejszą próbkę możemy zaobserwoać, że zbior posiada atrybuty, które sa od siebie w sposób oczywisty zależne, jak przykładowo liczba mieszkańców ogóleni i liczba kobiet/mężczyzn w Stanach Zjednoczonych. 
+Z wykresu można zaobserwować, że występuje dużo ciemnych, czerwonych i niebieskich plam sygnalizujących dużą korelację. Gdy weźmiemy mniejszą próbkę możemy zaobserwować, że zbiór posiada atrybuty, które są od siebie w sposób oczywisty zależne. Przykładowo: liczba mieszkańców ogólnie i liczba kobiet/mężczyzn w Stanach Zjednoczonych. 
 
 
 ```{r, message=FALSE, echo=FALSE, out.width = "100%", fig.align="center", fig.width=10, fig.height=8}
@@ -160,7 +170,7 @@ ggplot(smaill_cor_df, aes(colname, rowname, fill=value)) +
 
 
 ### Ograniczenie atrybutów 
-Aby poradzić sobie z problemem z zaleznymi atrybutami wykorzystane zostaną te najbardziej ogólne: 
+Aby poradzić sobie z zależnymi atrybutami wykorzystane zostaną te najbardziej ogólne: 
 
 * Urban.population - stopień zamieszkania w mieście.
 * Population..total - Ogólna populacja.
@@ -194,20 +204,6 @@ ggplot( chart_general_USA_Indicator_DF , aes(x=Year, y=value)) +
 
 ## Indeks rynkowy S&P Composite
 Zbiór opisuje właściwości indeksu S&P Composite. Zbiór został pogrupowany względem roku, a z wartości wyciągnięto średnią. Wartości puste zostały pominięte. 
-
-Na wykresie zostały zaprezentowane dostępne atrybuty zbioru. Można na jego podstwie wywnioskować, że S.P.Composite, Ral.Price, Dividend, i Real.Dividend mają podobny kształt. Tak samo Earnings i Real.Earnings.
-
-W dalszej analizie pominiemy atrybuty Real.Price, Dividend, Real.Dividen oraz Real.Earnings.
-
-Intrpretacja wskaźników:
-
-* CPI - wskaźnik cen towarów i usług konsumpcyjnych.
-* Cyclically.Adjusted.PE.Ratio - cyklicznie dostosowywany wskaźnik ceny do zysków.
-* Dividend - dywidenda.
-* Earnings - zarobki na indeksie.
-* Long.Interest.Rate – stopy procentowe, które obliczane są na podstawie długoterminowych obligacji rządowych lub porównywalnych papierów wartościowych.W przypadku braku danych z danego miesiąca nie bierzemy go pod uwagę.
-* Real.Price - realna cena.
-* S.P.Composite - wartość indeksu.
 
 ```{r}
 SP_Composite_DF <- data.frame(SP_Composite) %>%
@@ -245,8 +241,23 @@ SP_Composite_DF <- SP_Composite_DF %>%
          )
 ```
 
+Na wykresach zostały zaprezentowane dostępne atrybuty zbioru. Można na ich podstawie wywnioskować, że S.P.Composite, Ral.Price, Dividend, i Real.Dividend mają podobny kształt. Tak samo Earnings i Real.Earnings.
+
+W dalszej analizie pominiemy atrybuty Real.Price, Dividend, Real.Dividen oraz Real.Earnings.
+
+Interpretacja wskaźników:
+
+* CPI - wskaźnik cen towarów i usług konsumpcyjnych.
+* Cyclically.Adjusted.PE.Ratio - cyklicznie dostosowywany wskaźnik ceny do zysków.
+* Dividend - dywidenda.
+* Earnings - zarobki na indeksie.
+* Long.Interest.Rate – stopy procentowe, które obliczane są na podstawie długoterminowych obligacji rządowych lub porównywalnych papierów wartościowych. W przypadku braku danych z danego miesiąca nie bierzemy ich pod uwagę.
+* Real.Price - cena realna.
+* S.P.Composite - wartość indeksu.
+
+
 ## Cena złota
-Ponieważ cena złota jest ma tą samą wartość, wyrazoną w różncyh walutach, to na potrzeby analizy przyjęta zosatnie cena złota wyrażana w dolarach. Dodatkowo przyjemiemy średnią z notowania porannego i wieczornego.
+Ponieważ cena złota jest wyrażona w różnych walutach, to na potrzeby analizy przyjęta zosatnie cena złota wyrażana w dolarach. Dodatkowo przyjmiemy średnią z notowania porannego i wieczornego.
 
 ```{r}
 Gold_prices_DF <- data.frame(Gold_prices) %>% 
@@ -268,7 +279,15 @@ ggplot(Gold_prices_DF, aes(x=Year, y=Gold_Price_USD, group=1)) +
 
 
 ## Bitcoin
-Do analizy wykorzystamy średnią cenę bitcoina w ciagu roku. Lata przed 2009 otrzymają wartość 0.
+Do analizy wykorzystamy średnie wartości atrybutów bitcoina w ciągu roku. Lata przed 2009 otrzymają wartość 0.
+
+Dostępne pliki: 
+
+* BCHAIN-DIFF - trudność wydobycia.
+* BCHAIN-HRATE - liczba tera hashy wykonanych.
+* BCHAIN-MKPRU - średnia wartość rynkowa.
+* BCHAIN-TRVOU - całkowita wartość.
+
 
 ```{r}
 mock_Bitcoin_mkpru_DF <- data.frame(c(1995:2009), 0)
@@ -284,8 +303,6 @@ clean_bitcoin <- function(data, name) {
   clean <- rbind(clean, mock_Bitcoin_mkpru_DF)
 }
 
-
-# zbiorcze 
 Bitcoin_mkpru_DF <- clean_bitcoin(Bitcoin_mkpru, "Bitcoin_Price")
 Bitcoin_diff_DF  <- clean_bitcoin(Bitcoin_diff, "Bitcoin_Difficult")
 Bitcoin_hrate_DF <- clean_bitcoin(Bitcoin_hrate, "Bitcoin_Hash")
@@ -307,7 +324,7 @@ ggplot( chart_bitcoin , aes(x=Year, y=value)) +
 
 ```
 
-Z zaprezentowanych powyżej wykresów można zaobserwować, że wszytskie 4 wartości są od siebie zależne. Na potrzeby dalszych analiz skorzystamy z atrybutu ceny bitcoina.
+Z zaprezentowanych powyżej wykresów można zaobserwować, że wszystkie 4 wartości są od siebie zależne. Na potrzeby dalszych analiz skorzystamy z atrybutu ceny bitcoina.
 
 ## Połączenie danych
 ```{r}
@@ -349,22 +366,21 @@ knitr::kable(
 ```
 
 
-Najbardziej wyróżniającym korelacjami są:
+Interpretacja wybranych korelacji:
 
+* Populacja - Procent mieszkańców miast - Coraz więcej osób chce mieszkać w mieście. 
 * Yuan - Cena złota - Chiny są dużym eksporterem. Słaby Yaun oznacza dla pozostałych krajów niższe ceny.
-* Procent mieszkańców miast - Emisja CO2 - Osoby żyjące w miastach korzystają z większej iości dóbr, których istanienie wiąże się z produkcją CO2.
-* Procent mieskzańców miast - Populacja - Coraz więcej osób chce mieszkać w mieście. 
-* Procent mieskzańców miast - GDP per capital - Bogatsze osoby mieszkają bliżej ośreodków miejskich.
-* Populacja - Emisja CO2 - Każda człowiek powoduje wytwarzani CO2. Stany zjednoczone przeniosły produkcję do innych krajów, a same starają się ograniczać emisję CO2. 
+* Procent mieszkańców miast - Emisja CO2 - Jest to ciekawa korelacja. Sugeruje ona, że im większy procent mieszkańców miast w populacji, tym produkcja CO2 jest mniejsza.
+* Populacja - Emisja CO2 - Każda człowiek powoduje wytwarzanie CO2, a więc wzrost populacji powinien determinować wzrost CO2. Stany zjednoczone przeniosły produkcję do innych krajów, a same starają się ograniczać emisję CO2. 
+* Procent mieszkańców miast - GDP per capital - Bogatsze osoby mieszkają bliżej ośrodków miejskich.
 * Populacja - GDP per capital - Jest coraz więcej osób, które generują większy produkt krajowy brutto.   
-* Cena złota - Emisja CO2 - Duża emisja CO2 w Ameryce negatywnie wpływa na cenę złota. Możliwą intrpretacją jest wydawanie większych ilości pieniędzy na zdrowie, a nie dobra materialne. 
-* Można zauważyć, że Bitcoin nie ma dużej korelacji z żadny, z atrybutów. Może być to spowodowane tym, że jest to waluta wirtualana, która nie jest odzwierciedleniem rynku. 
-
+* Cena złota - Emisja CO2 - Duża emisja CO2 w Ameryce negatywnie wpływa na cenę złota. Możliwą intrpretacją jest wydawanie większych ilości pieniędzy na zdrowie, a nie na dobra materialne. Spadek wydatków na zdrowie pozwala lokować pieniądze w różne inwestycje.
+* Można zauważyć, że Bitcoin nie ma dużej korelacji z żadnym, z atrybutów. Może być to spowodowane tym, że jest to waluta wirtualna, która nie jest odzwierciedleniem rynku. 
 
 
 
 # Podsumowanie rozmiaru zbioru i podstawowe statystyki.
-Ostateczny zbiór poddany analizie zawiera 15 atrybutów i 24 obserwacje. 
+Ostateczny zbiór poddany analizie zawiera 12 atrybutów i 25 obserwacji. 
 
 ```{r}
 options(knitr.kable.NA = '')
@@ -373,59 +389,98 @@ knitr::kable(summary(df[7:12]))
 ```
 
 
+## Zmiana ceny złota w czasie, w porównaniu z kursem Chińskiego Yuan i wartością indeksu S&P Composite.
+
+Wielkość punktu reprezentuje cenę złota w USD.
+
+Z poniższego wykresu w początkowej fazie można zaobserwować, że zmiana ceny indeksu bez dużych odchyleń kursu Yuan miała negatywny wpływ na wzrost ceny złota. Widać również, że cena złota osiągała swoje największe wartości przy niskim kursie Yuan. Można wysunąć wnioski, że wzrost cena indeksu ma największy wpływ na wzrost ceny złota, gdy kurs Yuan jest niski. Wyższy kursu Yuan niweluje korelację miedzy wzrostem ceny indeksu, a złota. 
+
+
+```{r, echo=FALSE}
+animated_plot <- df %>% 
+  select(Year, Yuan, Gold_Price_USD, S.P.Composite)
+animated_plot[, 1] <- sapply(animated_plot[, 1], as.integer)
+
+p <- ggplot(animated_plot, aes(x=Yuan, y=S.P.Composite, size = Gold_Price_USD)) +
+  geom_point(show.legend = FALSE, alpha = 0.7) +
+  scale_color_viridis_d() +
+  labs(title = 'Rok: {frame_time}', x = "Kurs Yuan wzgledem USD", y = "Wartość indeksu S&P Composite [USD]") +
+  transition_time(Year) 
+
+animate(p)
+```
+
+
 
 # Klasyfikator
 
 Niniejsza sekcja opisuje proces tworzenia regresora, którego zadaniem jest przewidywanie ceny złota. 
-Ze zbioru zostanie usunięty rok ze względu na XYZ.
+Ze względu na uniwersalność zostanie wykorzystany algorytm Random Forest z wykorzystaniem powtórzonej metody krzyżowej.
+
+## Podział zbioru i przygotowanie do trenowania modelu
 
 ```{r}
-reggresion_df <- df[-1]
+set.seed(23)
+reggresion_df <- df %>% mutate(Year = as.numeric(Year))
 
 inTraining  <- createDataPartition( y = reggresion_df$Gold_Price_USD, p=0.7, list=F)
 training <- reggresion_df[ inTraining,]
 testing  <- reggresion_df[-inTraining,]
 
-d1 <- data.frame(price=reggresion_df[inTraining,]$Gold_Price_USD)
-d2 <- data.frame(price=reggresion_df[-inTraining,]$Gold_Price_USD)
-
-ggplot(mapping=aes(alpha=0.4)) + 
- geom_density(aes(price, fill="training"), d1) + 
- geom_density(aes(price, fill="testing"), d2) + 
- theme_minimal()
 ```
 
-
+## Uczenie modelu
 ```{r}
-set.seed(23)
+rfGrid <- expand.grid(mtry = 10:40)
 ctrl <- trainControl(
-    # powtórzona ocena krzyżowa
     method = "repeatedcv",
-    # liczba podziałów
-    number = 5,
-    # liczba powtórzeń
+    number = 2,
     repeats = 5)
 
-fit <- train(Gold_Price_USD ~ .,
+modelWithRepeateDCV <- train(Gold_Price_USD ~ .,
              data = training,
              method = "rf",
              trControl = ctrl,
-             # Paramter dla algorytmu uczącego
-             ntree = 30)
-fit
+             tuneGrid = rfGrid,
+             ntree = 30
+             )
+modelWithRepeateDCV
 ```
+
+Najlepszy model został stworzony dla parametru mtry (liczba zmiennych losowo wybranych jako kandydaci w każdym podziale) równego 30.
+Błąd średniokwadratowy (RMSE) dla tego modelu jest najmniejszy i wynosi 154.3314. Patrząc na powyższą tabelkę można też zauważyć, że Rsquared (miara dopasowania modelu do danych) jest jednym z wyższych, co pozwala upewnić się w wyborze najlepszego modelu. 
+
+## Predykcja
+```{r}
+rfWithRepeateDCV <- predict(modelWithRepeateDCV, newdata = testing)
+```
+
+## Porównanie przewidywania modelu, a prawdziwymi wartościami
+Poniższy wykres prezentuje wartości sugerowane przez model, oraz prawdziwe. 
 
 ```{r}
-rfClasses <- predict(fit, newdata = testing)
+plot_df <- testing %>% select(Year, Gold_Price_USD)
+plot_df$Predicted <- rfWithRepeateDCV
 
-confusionMatrix(data = rfClasses, testing$Gold_Price_USD)
+
+ggplot(plot_df, aes(x=Year)) + 
+  geom_line(aes(y = Gold_Price_USD, color = "Rzeczywista cena złota"), size=1) + 
+  geom_line(aes(y = Predicted, color="Cena obliczona przez model"), size=1) +
+  labs(x = "Rok", y = "Cena złota [USD]") +
+  theme_minimal() +
+  scale_color_manual(name = "Legenda", values = c("Rzeczywista cena złota" = "darkred", "Cena obliczona przez model" = "steelblue"))
 ```
 
+## Analizę ważności atrybutów 
+```{r}
+importance(modelWithRepeateDCV$finalModel)
+```
+Najważniejszymi atrybutami przy wyborze regresji są:
 
-
-
-
-
+* Kurs Chińskiego Yuan (Yuan) - gospodarka Chin ma realny wpływ na cenę złota.
+* Rok (Year) - cena złota zmienia się w czasie. Dlatego inwestycja w złoto jest inwestycją długoterminową. 
+* Stopa procentowa indeksu S&P Composite (SP.Composite.Long.Interest.Rate) - cena złota jest w pewnym stopniu odwzorowaniem kondycji rynków finansowych.
+* Populacja (Population..total) - większa populacja oznacza większą liczbę chętnych na złoto, co zwiększa popyt.
 
 
 
