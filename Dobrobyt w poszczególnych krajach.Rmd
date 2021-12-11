@@ -473,8 +473,18 @@ ggplot(plot_df, aes(x=Year)) +
 
 ## Analizę ważności atrybutów 
 ```{r}
-importance(modelWithRepeateDCV$finalModel)
+importance_df <- data.frame( importance(modelWithRepeateDCV$finalModel))
+importance_df$names <- rownames(importance_df)
+
+
+ggplot(importance_df, aes(x=names, y=IncNodePurity/1000)) + 
+  geom_bar(stat="identity") +
+  labs(x="Atrybuty", y="Ważność atrybutu") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
 ```
+
 Najważniejszymi atrybutami przy wyborze regresji są:
 
 * Kurs Chińskiego Yuan (Yuan) - gospodarka Chin ma realny wpływ na cenę złota.
